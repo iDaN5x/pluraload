@@ -1,7 +1,5 @@
 # PluraLoad
 > Easily download PluralSight courses
 
-## TODO:
-- [ ] Support download of selected modules & clips with:  
-`--modules=2{1,3},5`
-- [ ] .
+## Todo:
+- [ ] Support download of selected modules & clips with `--selective=2{1,3};5`.

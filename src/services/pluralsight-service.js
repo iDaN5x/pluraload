@@ -23,7 +23,7 @@ class AuthorizationFailedError extends Error {/* TODO: info */}
 
 class PluralSightService {
     constructor() {
-        this._token = null;
+        this._jwtToken = null;
         this._authInfo = null;
         this._setupRestClient();
     }
@@ -40,7 +40,7 @@ class PluralSightService {
             transformRequest: [(data, headers) => {
                 // If authorized, add JWT token to cookia-header.
                 if (this.authorized)
-                    headers["cookie"] = `PsJwt-production=${this._token.jwt};`;
+                    headers["cookie"] = `PsJwt-production=${this._jwtToken.token};`;
             }]
         });
     }
@@ -51,11 +51,11 @@ class PluralSightService {
     }
 
     get authorized() {
-        const {jwt, expiration} = this._token || {};
+        const {jwt, expiration} = this._jwtToken || {};
         return (isString(jwt) && moment(expiration).isAfter());
     }
 
-    async authenticate({username, password, jwtRefreshToken}) {
+    async authenticate({username, password, jwtRefreshToken = null}) {
         // If existing JWT refresh token was provided, use it.
         if (typeof(jwtRefreshToken) === "object")
             this._authInfo = jwtRefreshToken;
@@ -75,10 +75,15 @@ class PluralSightService {
         return this._authInfo;
     }
 
-    async authorize() {
+    async authorize({jwtToken = null}) {
+        // User must be authenticatied on the system.
         if (!this.authenticated)
             throw new NotAuthenticatedError();
 
+        // If JWT token was provided, try using it.
+        this._jwtToken = this._jwtToken || jwtToken;
+
+        // If missing or expired JWT token, try fetching a new one.
         if (!this.authorized) {
             // Inject device id to url.
             const endpoint = parametrify(AUTHORIZE_ENDPOINT, {
@@ -87,7 +92,7 @@ class PluralSightService {
 
             try {
                 // Get a fresh JWT token.
-                this._token = await this.rest.post(endpoint, this._authInfo);
+                this._jwtToken = await this.rest.post(endpoint, this._authInfo);
             }
 
             catch (e) {
@@ -95,7 +100,7 @@ class PluralSightService {
             }
         }       
 
-        return this._token;
+        return this._jwtToken;
     }
 
     async gql(query, variables = {}) {
@@ -125,10 +130,20 @@ class PluralSightService {
             }
         `);
 
-        // Get query result from response body.
-        const resBody = res.data;
+        // Get playlist from response body.
+        const playlist = res.data.rpc.bootstrapPlayer.course
         
-        return resBody.data.rpc.bootstrapPlayer.course;
+        // TODO: prefare immutability.
+        // Add module & clip indexs to enhance usability.
+        playlist.modules.forEach((index, module) => {
+            module.index = index;
+            module.clips.forEach((index, clip) => {
+                clip.index = index;
+            });
+        });
+
+        // Return playlist.
+        return playlist;
     }
 
     async getCourseCaptionLangs(courseId) {
@@ -150,6 +165,44 @@ class PluralSightService {
         const resBody = res.data;
         
         return data.rpc.bootstrapPlayer.course.translationLanguages;
+    }
+
+    async getClipDownloadUrl(clipId) {
+        // Query variable including format & quality.
+        const getClipInfo = {clipId, quality: "1280x720", mediaType: "mp4"};
+
+        // Query clip download link.
+        const res = await this.gql(`
+            query BootstrapPlayer {
+                rpc {
+                    bootstrapPlayer {
+                        GetClip(input: $getClipInput) {
+                            urls {
+                                cdn
+                            }
+                        }
+                    }
+                }
+            }
+        `, {getClipInfo});
+
+        // Get urls from response data.
+        const urls = res.data.rpc.bootstrapPlayer.urls;
+
+        // Return first CDN url.
+        return urls[0].cdn;
+
+    }
+
+    async getClipDownloadStream(clipId) {
+        // Get clip's download clip.
+        const clipDownloadUrl = await this.getClipDownloadUrl(clipId);
+
+        // Request clip file.
+        const res = await this.rest(clipDownloadUrl, {responseType: "stream"});
+
+        // Return download stream.
+        return res.data;
     }
 
     async getClipCaptionsStream(clipId, langCode) {

@@ -1,78 +1,102 @@
-const mkdirp = require("mkdirp");
 const {queue} = require("async");
-const {promisify} = require("util");
 const {pipeline} = require("stream");
 const {join: joinPath} = require("path");
-const {createWriteStream} = require("fs");
 const {isObject} = require("../helpers/validators");
 const SubripStream = require("../helpers/subrip-stream");
+const {mkdirp, createWriteStream} = require("fs-extra");
 
-const _defaultDownloadOptions = {
+const DL_LANES = 5;
+
+const _defaultOptions = {
     destDir = process.cwd(),
     captions = false,
-    selection = undefined,
     captionLangCodes = ["en"]
 };
 
-// Promisifed version to use in async functions.
-const mkdirpAsync = promisify(mkdirp);
-
 class CliController {
-    constructor({pluralSight, config}) {
+    constructor({pluralSight}) {
         this._pluralSight = pluralSight;
-        this._config = config;
-
-        // Used to download clip files in parallel.
-        this._downloadQueue = queue(
-            this._downloadFile.bind(this),
-            this._config.dlLanes);
     }
+
+    
 
     async getCoursePlaylist(courseId) {
         // Get course playlist.
         return await this._pluralSight.getCoursePlaylist(courseId);
     }
 
-    async downloadCourse(playlist, options = defaultDownloadOptions) {       
-        // Get course target directory.
-        const courseDir = joinPath(options.destDir, playlist.course.title);
+    async downloadCourse(course, options = defaultDownloadOptions) {       
+        // Get course directory path.
+        const courseDir = joinPath(options.destDir, course.title);
+        
+        // Create course directory.        
+        await mkdirp(courseDir);
 
-        // Download desired course modules.
-        const modules = playlist.course.modules;
+        // Download course modules.
+        for (const module of course.modules) {
+            await this.downloadModule(module, {
+                destDir: courseDir,
+                ...options
+            });
+        };
+    }
 
-        for (let i = 0; i < modules.length; i++) {
-            // Download module.
-            await this.downloadModule(playlist, i, options);
+    async downloadModule(module, options = _defaultOptions) {
+        // Get module directory path.
+        const dirName = `${module.index} - ${module.title}`;
+        const dirPath = joinPath(options.destDir, dirName);
+
+        // Create module directory.
+        await mkdirp(dirPath);
+
+        // Download module clips.
+        for (const clip of module.clips) {
+            await this.downloadClip(clip, {
+                destDir: dirPath,
+                ...options
+            });
+        };
+    }
+
+    async downloadClip(clip, options = _defaultOptions) {
+        // Get clip file path.
+        const fileName = `${clip.index} - ${clip.name}.mp4`;
+        const filePath = joinPath(options.destDir, fileName);
+
+        // Open clip file stream.
+        const file = createWriteStream(filePath);
+
+        // Open download stream.
+        const dlStream = this._pluralSight.getClipDownloadStream();
+
+        // Save clip to file.
+        await pipeline(dlStream, file);
+
+        // Download captions if requested.
+        if (options.captions) {
+            for (const langCode of options.captionLangCodes) {
+                await this.downloadClipCaptions(clip, langCode);
+            }
         }
     }
 
-    async downloadModule(playlist, moduleIdx, options = _defaultDownloadOptions) {
-        // Get module's destination directory path.
-        const destDir = joinPath(courseDir, `${i} - ${$module.title}`);
-
-    }
-
-    async downloadClip(playlist, moduleIdx, clipIdx, options = _defaultDownloadOptions) {
-        
-    }
-
-    async downloadClipCaptions(clip, _defaultDownloadOptions) {
+    async downloadClipCaptions(clip, langCode) {
         // Open source captions' stream.
         const captionsStream = await this._pluralSight
-            .getClipCaptionsStream(clip.id, lang.code);
+            .getClipCaptionsStream(clip.id, langCode);
 
         // Create a new subrip-transformer.
         const subrip = new SubripStream();
 
         // Generate file path.
-        const fileName = `${clip.index} - ${clip.name} - ${lang.code}.srt`;
+        const fileName = `${clip.index} - ${clip.name}.${lang.code}.srt`;
         const filePath = joinPath(outDir, fileName);
 
         // Open destination file's write-stream.
-        const destFile = createWriteStream(filePath);
+        const file = createWriteStream(filePath);
        
         // Save clip captions as a SubRip file.
-        await pipeline(captionsStream, subrip, destFile);
+        await pipeline(captionsStream, subrip, file);
     };
 }
 

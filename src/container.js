@@ -1,6 +1,7 @@
 const {createContainer, asValue, asFunction, asClass} = require("awilix");
 const PluralSightService = require("./services/pluralsight-service");
 const CliController = require("./controllers/cli-controller");
+const LoginScreen = require("./screens/login");
 const ConfigStore = require("configStore");
 
 // Factory method for configuration store.
@@ -15,6 +16,7 @@ container.register({
     config: asFunction(makeConfigStore).singleton(),
     pluralSight: asClass(PluralSightService),
     cliController: asClass(CliController).singleton(),
+    loginScreen: asClass(LoginScreen)
 });
 
 module.exports = container;
